@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState, type ReactElement } from "react";
-import { Box, Boxes, ChevronRight, CircleDot, Eye, EyeOff, Grid2x2, Square } from "lucide-react";
+import { Box, Boxes, ChevronRight, CircleDot, Eye, EyeOff, Grid2x2, Link2, Square } from "lucide-react";
 import type { Feature, ModelData, ModelNode, ReviewStatus } from "./engine/types";
 import type { Selection, ViewerPart } from "./engine/viewer";
 import type { Units } from "./engine/units";
 import { featureLabel, reviewKey } from "./labels";
+import type { LinkMap } from "./links";
 
 interface TreeNode {
   key: string;
@@ -52,6 +53,7 @@ export function CadTree({
   units,
   selection,
   reviews,
+  links,
   rev,
   onSelect,
   onFit,
@@ -61,7 +63,8 @@ export function CadTree({
   parts: ViewerPart[];
   units: Units;
   selection: Selection | null;
-  reviews: Record<string, ReviewStatus>;
+  reviews: Readonly<Record<string, ReviewStatus>>;
+  links?: LinkMap;
   rev: number;
   onSelect: (sel: Selection) => void;
   onFit: () => void;
@@ -104,7 +107,9 @@ export function CadTree({
     const open = q ? true : isOpen(n);
     const hidden = n.parts.length > 0 && n.parts.every((i) => !parts[i]?.visible);
     const Icon = n.type === "assembly" ? Boxes : n.type === "part" ? Box : n.feature?.kind === "pattern" ? Grid2x2 : n.feature?.kind === "hole" ? CircleDot : Square;
-    const status = n.feature && n.partIdx != null ? reviews[reviewKey(parts[n.partIdx].name, n.feature.name)] ?? "Inferred" : null;
+    const fkey = n.feature && n.partIdx != null ? reviewKey(parts[n.partIdx].name, n.feature.name) : null;
+    const status = fkey ? reviews[fkey] ?? "Inferred" : null;
+    const linked = fkey ? links?.[fkey] ?? [] : [];
     rows.push(
       <div
         key={n.key}
@@ -150,6 +155,11 @@ export function CadTree({
         <Icon size={14} className="cad-row-icon" />
         <span className="cad-row-name">{n.name}</span>
         {n.desc ? <span className="cad-row-desc">{n.desc}</span> : null}
+        {linked.length ? (
+          <span className="cad-linked" title={`Linked to ${linked.join(", ")}`}>
+            <Link2 size={12} />
+          </span>
+        ) : null}
         {status && status !== "Inferred" ? <span className={`cad-dot ${STATUS_CLASS[status]}`} title={status} /> : null}
         {n.type !== "feature" ? (
           <button

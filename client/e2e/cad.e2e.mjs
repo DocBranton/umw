@@ -67,6 +67,31 @@ try {
   check("Validation survives a page re-render", /Validated/.test((await page.locator(".cad-title").textContent().catch(() => "")) ?? ""));
   await page.screenshot({ path: join(OUT, "2-verified-cad.png") });
 
+  // Requirement links (present once traceability ships)
+  const linkSelect = page.getByLabel("Link to requirement");
+  if (await linkSelect.count()) {
+    await linkSelect.selectOption("REQ-002");
+    await page.getByLabel("Link to requirement").selectOption("REQ-003");
+    const reqList = (await page.locator(".cad-reqlist").textContent()) ?? "";
+    check("Feature links to two requirements", /REQ-002/.test(reqList) && /REQ-003/.test(reqList));
+    check("Linking leaves the feature's review unchanged", /Validated/.test((await page.locator(".cad-title").textContent()) ?? ""));
+    check("Tree marks the linked feature", (await page.locator(".cad-row", { hasText: "Hole001" }).locator(".cad-linked").count()) === 1);
+
+    await page.locator(".phase", { hasText: "Requirements" }).click();
+    const row = (id) => page.locator("table.req-table tr", { hasText: id });
+    check("Requirement rows list the linked feature", /Hole001/.test((await row("REQ-002").textContent()) ?? "") && /Hole001/.test((await row("REQ-003").textContent()) ?? ""));
+    check("Linking leaves requirement status unchanged", /In Review/.test((await row("REQ-003").locator("button.state").textContent()) ?? ""));
+    await page.screenshot({ path: join(OUT, "2b-requirements-links.png") });
+
+    // Jump from the requirement to the feature in Verified CAD; links and review survive the phase switch.
+    await row("REQ-002").getByRole("button", { name: "Hole001" }).click();
+    await waitStatus(/features recognized/);
+    await page.waitForFunction(() => /Hole001/.test(document.querySelector(".cad-title")?.textContent ?? ""), null, { timeout: 30000 });
+    const title = (await page.locator(".cad-title").textContent()) ?? "";
+    check("Requirement link opens the feature in Verified CAD", /Hole001/.test(title));
+    check("Review and links survive the phase switch", /Validated/.test(title) && /REQ-003/.test((await page.locator(".cad-reqlist").textContent()) ?? ""));
+  }
+
   // Generated drawing (present once the drawing view ships)
   const drawingToggle = page.getByRole("radio", { name: "Drawing" });
   if (await drawingToggle.count()) {

@@ -43,6 +43,8 @@ import {
   type ViewId,
 } from "@/lib/gmw-data";
 import { MissionPortfolioView, PortfolioView } from "@/components/portfolio";
+// The CAD link model is plain data (no three.js), so it is safe to import eagerly.
+import { emptySession, featuresFor, pruneLinks, splitKey, type CadSession, type FeatureKey } from "@/cad/links";
 
 // three.js and the OpenCascade worker load only when the CAD workspace opens.
 const CadWorkspace = lazy(() => import("@/cad/CadWorkspace"));
@@ -1661,6 +1663,27 @@ function EngineeringView({
   const [sheet, setSheet] = useState<"drawing" | "image">("drawing");
   const [uploads, setUploads] = useState<{ id: string; name: string; kind: string; url?: string; state: string }[]>([]);
   const [cadFile, setCadFile] = useState<File | null>(null);
+  // Feature reviews and requirement links, per CAD model, for this session.
+  const [cadSessions, setCadSessions] = useState<Record<string, CadSession>>({});
+  const [cadModel, setCadModel] = useState<{ key: string; name: string } | null>(null);
+  const [cadFocus, setCadFocus] = useState<{ key: FeatureKey; nonce: number } | null>(null);
+  const cadSession = (cadModel && cadSessions[cadModel.key]) || null;
+  function onCadModelLoaded(info: { key: string; name: string; features: FeatureKey[] }) {
+    setCadModel({ key: info.key, name: info.name });
+    const prev = cadSessions[info.key];
+    if (!prev) {
+      setCadSessions((cur) => ({ ...cur, [info.key]: emptySession() }));
+      return;
+    }
+    // Drop links and reviews for features this model no longer has.
+    const present = new Set(info.features);
+    const pruned = pruneLinks(prev.links, present, new Set(requirements.map((r) => r.id)));
+    const reviews = Object.fromEntries(Object.entries(prev.reviews).filter(([k]) => present.has(k)));
+    setCadSessions((cur) => ({ ...cur, [info.key]: { reviews, links: pruned.links } }));
+    if (pruned.droppedLinks) {
+      onPing(`${pruned.droppedLinks} requirement link${pruned.droppedLinks === 1 ? "" : "s"} dropped: the feature or requirement is no longer present`);
+    }
+  }
   const [hiddenEvidence, setHiddenEvidence] = useState<string[]>([]);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
@@ -1986,6 +2009,7 @@ function EngineeringView({
                   <th>Proposed value</th>
                   <th>Source</th>
                   <th>Confidence</th>
+                  <th>Linked geometry</th>
                   <th>Status</th>
                 </tr>
               </thead>
@@ -2001,6 +2025,26 @@ function EngineeringView({
                         <i style={{ width: `${row.confidence}%` }} />
                       </span>
                       <span className="muted">{row.confidence}%</span>
+                    </td>
+                    <td className="req-geo">
+                      {cadSession && featuresFor(cadSession.links, row.id).length ? (
+                        featuresFor(cadSession.links, row.id).map((k) => (
+                          <button
+                            key={k}
+                            type="button"
+                            className="linkish"
+                            title={`${splitKey(k).part} · open in Verified CAD`}
+                            onClick={() => {
+                              setCadFocus({ key: k, nonce: Date.now() });
+                              onPhase("cad");
+                            }}
+                          >
+                            {splitKey(k).feature}
+                          </button>
+                        ))
+                      ) : (
+                        <span className="muted">—</span>
+                      )}
                     </td>
                     <td>
                       <button
@@ -2019,6 +2063,11 @@ function EngineeringView({
                 ))}
               </tbody>
             </table>
+            {cadModel ? (
+              <p className="muted req-geo-note">
+                Linked geometry is from {cadModel.name}. Link features to requirements in Verified CAD; linking never changes a status.
+              </p>
+            ) : null}
             <button
               className="action req-accept"
               onClick={() => {
@@ -2059,7 +2108,18 @@ function EngineeringView({
               and the additive process spec are unresolved.
             </p>
             <Suspense fallback={<p className="muted">Loading the CAD workspace…</p>}>
-              <CadWorkspace file={cadFile} onPing={onPing} partNumber={selected.part} />
+              <CadWorkspace
+                file={cadFile}
+                onPing={onPing}
+                partNumber={selected.part}
+                requirements={requirements}
+                session={cadSession ?? emptySession()}
+                onSessionChange={(next) => {
+                  if (cadModel) setCadSessions((cur) => ({ ...cur, [cadModel.key]: next }));
+                }}
+                onModelLoaded={onCadModelLoaded}
+                focus={cadFocus}
+              />
             </Suspense>
           </>
         ) : null}
