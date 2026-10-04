@@ -34,6 +34,17 @@ function triVerts(pos: Float32Array, idx: Uint32Array, t: number): void {
 }
 
 const pad = (n: number) => String(n).padStart(3, "0");
+
+/**
+ * Report fitted sizes to 5 significant figures. Tessellation and float32 noise sit
+ * around 1 part in 10^5–10^6, enough to flip the last displayed digit of a size that
+ * lands on a rounding boundary (0.375 in = 9.525 mm). The fit RMS stays in the evidence.
+ */
+export function snapSig(x: number, sig = 5): number {
+  if (!x || !Number.isFinite(x)) return x;
+  const p = 10 ** (sig - 1 - Math.floor(Math.log10(Math.abs(x))));
+  return Math.round(x * p) / p;
+}
 const deg = THREE.MathUtils.degToRad;
 
 // ---------- mass properties ----------
@@ -302,7 +313,7 @@ export function classifyFace(face: { id: number; tris: number[] }, pos: Float32A
     v,
     cx: fit.cx,
     cy: fit.cy,
-    radius: fit.r,
+    radius: snapSig(fit.r),
     rms: fit.rms,
     tMin,
     tMax,
@@ -473,13 +484,13 @@ export function recognizeFeatures(
       const big = bigAtMin ? lo : hi;
       small = bigAtMin ? hi : lo;
       type = "Counterbore";
-      cbore = { radius: big.radius, depth: big.tMax - big.tMin };
+      cbore = { radius: big.radius, depth: snapSig(big.tMax - big.tMin) };
       entryAtMax = !bigAtMin;
     } else if (stack.length > 2) type = "Stepped hole";
 
     const entry = c.clone().add(axis.clone().multiplyScalar(entryAtMax ? tMax : tMin));
     const inward = entryAtMax ? axis.clone().negate() : axis.clone();
-    const length = tMax - tMin;
+    const length = snapSig(tMax - tMin);
     const rmsRel = Math.max(...stack.map((s) => s.rms / s.radius));
     const faceIds = stack.flatMap((s) => s.faces);
     features.push({
@@ -539,7 +550,7 @@ export function recognizeFeatures(
       source: "cad_import",
       evidence: `${facesWord(g.faces.length, faceSource)}; cylinder fit RMS ${fitPct(rel)} of radius`,
       radius: g.radius,
-      length: g.tMax - g.tMin,
+      length: snapSig(g.tMax - g.tMin),
       axis: g.axis.clone(),
       entry: g.center.clone().add(g.axis.clone().multiplyScalar(g.tMax)),
       confidence: Math.max(60, Math.min(99, Math.round(99 - rel * 2500))),
