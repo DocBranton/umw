@@ -13,5 +13,6 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["client/src"]
+  "include": ["client/src"],
+  "exclude": ["client/src/**/*.test.ts"]
 }

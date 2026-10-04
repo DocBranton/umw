@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   Activity,
   BarChart3,
@@ -43,6 +43,9 @@ import {
   type ViewId,
 } from "@/lib/gmw-data";
 import { MissionPortfolioView, PortfolioView } from "@/components/portfolio";
+
+// three.js and the OpenCascade worker load only when the CAD workspace opens.
+const CadWorkspace = lazy(() => import("@/cad/CadWorkspace"));
 
 type ChatMsg = { role: "bot" | "user"; text: string };
 
@@ -1657,6 +1660,7 @@ function EngineeringView({
   const [factId, setFactId] = useState(thread.facts[0]?.id ?? "1");
   const [sheet, setSheet] = useState<"drawing" | "image">("drawing");
   const [uploads, setUploads] = useState<{ id: string; name: string; kind: string; url?: string; state: string }[]>([]);
+  const [cadFile, setCadFile] = useState<File | null>(null);
   const [hiddenEvidence, setHiddenEvidence] = useState<string[]>([]);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
@@ -1702,7 +1706,7 @@ function EngineeringView({
       const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
       const kind = ["png", "jpg", "jpeg", "tif", "tiff", "webp", "gif"].includes(ext)
         ? "Image"
-        : ["step", "stp", "iges", "igs", "sldprt"].includes(ext)
+        : CAD_EXTS.includes(ext)
           ? "CAD"
           : "Drawing";
       return {
@@ -1714,6 +1718,9 @@ function EngineeringView({
       };
     });
     setUploads((current) => [...added, ...current]);
+    // The first CAD file opens in the Verified CAD workspace.
+    const cad = Array.from(list).find((file) => CAD_EXTS.includes(file.name.split(".").pop()?.toLowerCase() ?? ""));
+    if (cad) setCadFile(cad);
     const image = added.find((item) => item.url);
     if (image?.url) {
       setPreviewUrl(image.url);
@@ -1721,7 +1728,9 @@ function EngineeringView({
     } else if (added[0]?.kind === "Drawing" || added[0]?.kind === "CAD") {
       setSheet("drawing");
     }
-    onPing(`${added.length} file${added.length === 1 ? "" : "s"} added to the evidence package`);
+    onPing(
+      `${added.length} file${added.length === 1 ? "" : "s"} added to the evidence package${cad ? `. Open Verified Engineering CAD to inspect ${cad.name}` : ""}`,
+    );
   }
 
   return (
@@ -1755,7 +1764,7 @@ function EngineeringView({
         ))}
       </div>
 
-      <section className="req-band">
+      <section className={phase === "cad" ? "req-band cad-band" : "req-band"}>
         <div className="panel-h">
           <h3>
             {phase === "evidence"
@@ -2044,10 +2053,15 @@ function EngineeringView({
         ) : null}
 
         {phase === "cad" ? (
-          <p className="muted">
-            Feature provenance and dimensional reconciliation open after the requirements baseline is validated.
-            Reconstruction stays blocked while GD&T and the additive process spec are unresolved.
-          </p>
+          <>
+            <p className="muted">
+              Recognized features are proposals until an engineer validates them. Reconstruction stays blocked while GD&T
+              and the additive process spec are unresolved.
+            </p>
+            <Suspense fallback={<p className="muted">Loading the CAD workspace…</p>}>
+              <CadWorkspace file={cadFile} onPing={onPing} />
+            </Suspense>
+          </>
         ) : null}
 
         {phase === "evaluation" ? (
@@ -2145,6 +2159,8 @@ function EngineeringView({
     </section>
   );
 }
+
+const CAD_EXTS = ["step", "stp", "iges", "igs", "brep", "brp", "stl", "obj", "glb", "gltf", "sldprt"];
 
 const drawingPins = [
   { x: 250, y: 78 },
