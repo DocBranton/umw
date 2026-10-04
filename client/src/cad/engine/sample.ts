@@ -193,7 +193,7 @@ export function buildSampleBracket(): ModelData {
   meshes.push(up.toMesh("Upright (Part001)", TI, upM));
 
   // Base plate: 3.750 x 2.000 x 0.375 with 4x Ø0.375 holes, counterbored Ø0.625 x 0.125.
-  const plateHoles: HoleSpec[] = [[-1.5, -0.7], [1.5, -0.7], [1.5, 0.7], [-1.5, 0.7]].map(([x, y]) => ({ x, y, r: 0.1875, cbR: 0.3125, cbD: 0.125 }));
+  const plateHoles: HoleSpec[] = [[-1.4, -0.55], [1.4, -0.55], [1.4, 0.55], [-1.4, 0.55]].map(([x, y]) => ({ x, y, r: 0.1875, cbR: 0.3125, cbD: 0.125 }));
   const plate = new Builder();
   plate.steppedPlate(() => roundedRect(-1.875, -1, 1.875, 1, 0.25), plateHoles, 0.375);
   meshes.push(plate.toMesh("Base Plate (Part002)", TI));

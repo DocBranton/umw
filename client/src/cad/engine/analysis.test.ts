@@ -111,3 +111,9 @@ test("units format inches and millimetres", () => {
   assert.equal(u.len(0.5), "12.70 mm");
   assert.equal(u.dia(0.25), "Ø12.70 mm");
 });
+
+test("sample base plate stays inside its 3.750 x 2.000 outline", () => {
+  const b = analyzePart(byName("Base Plate"), newCounters()).box;
+  assert.ok(Math.abs(b.min.x + 1.875) < 1e-6 && Math.abs(b.max.x - 1.875) < 1e-6);
+  assert.ok(Math.abs(b.min.y + 1) < 1e-6 && Math.abs(b.max.y - 1) < 1e-6);
+});
