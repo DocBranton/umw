@@ -2059,7 +2059,7 @@ function EngineeringView({
               and the additive process spec are unresolved.
             </p>
             <Suspense fallback={<p className="muted">Loading the CAD workspace…</p>}>
-              <CadWorkspace file={cadFile} onPing={onPing} />
+              <CadWorkspace file={cadFile} onPing={onPing} partNumber={selected.part} />
             </Suspense>
           </>
         ) : null}

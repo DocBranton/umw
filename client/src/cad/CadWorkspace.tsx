@@ -2,6 +2,7 @@
 // Loaded lazily (three.js and the OpenCascade worker are only fetched when it opens).
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import {
+  Download,
   Expand,
   Eye,
   Focus,
@@ -23,6 +24,7 @@ import { Units, type DisplayUnit } from "./engine/units";
 import type { ModelData, ReviewStatus } from "./engine/types";
 import { CadTree } from "./CadTree";
 import { CadDetails } from "./CadDetails";
+import { MATERIALS } from "./labels";
 import "./cad.css";
 
 export interface CadWorkspaceProps {
@@ -33,6 +35,9 @@ export interface CadWorkspaceProps {
   onPing?: (msg: string) => void;
   /** Compact mode: open the full Verified CAD workspace. */
   onOpenFull?: () => void;
+  /** Shown in the generated drawing's title block. */
+  partNumber?: string;
+  rev?: string;
 }
 
 const TOOLS: { id: Tool; label: string; key: string; Icon: typeof Hand }[] = [
@@ -44,7 +49,7 @@ const TOOLS: { id: Tool; label: string; key: string; Icon: typeof Hand }[] = [
 ];
 const VIEWS: ViewName[] = ["iso", "front", "back", "top", "bottom", "left", "right"];
 
-export default function CadWorkspace({ file, compact = false, onPing, onOpenFull }: CadWorkspaceProps) {
+export default function CadWorkspace({ file, compact = false, onPing, onOpenFull, partNumber, rev: partRev }: CadWorkspaceProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const labelsRef = useRef<HTMLDivElement>(null);
   const cubeRef = useRef<HTMLDivElement>(null);
@@ -68,6 +73,10 @@ export default function CadWorkspace({ file, compact = false, onPing, onOpenFull
   const [reviews, setReviews] = useState<Record<string, ReviewStatus>>({});
   const [materialIdx, setMaterialIdx] = useState(0);
   const [displayUnit, setDisplayUnit] = useState<DisplayUnit>("in");
+  const [mode, setMode] = useState<"3d" | "drawing">("3d");
+  const [sheet, setSheet] = useState<{ url: string; canvas: HTMLCanvasElement } | null>(null);
+  const [sheetError, setSheetError] = useState<string | null>(null);
+  const drawingMod = useRef<typeof import("./engine/drawing-render") | null>(null);
   const ping = useCallback((m: string) => onPing?.(m), [onPing]);
 
   // Create the viewer once per mount.
@@ -160,6 +169,49 @@ export default function CadWorkspace({ file, compact = false, onPing, onOpenFull
     if (file) void openFile(file);
     else void openModel(buildSampleBracket());
   }, [file, openFile, openModel]);
+
+  // Generated drawing: rebuilt from what the viewer shows whenever it changes.
+  useEffect(() => {
+    if (mode !== "drawing" || !model) return;
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      const viewer = viewerRef.current;
+      if (!viewer) return;
+      try {
+        drawingMod.current ??= await import("./engine/drawing-render");
+        if (cancelled) return;
+        const canvas = drawingMod.current.generateDrawing(viewer, units, {
+          title: model.name,
+          partNumber,
+          rev: partRev,
+          material: MATERIALS[materialIdx].name,
+        });
+        setSheet({ url: canvas.toDataURL("image/png"), canvas });
+        setSheetError(null);
+      } catch (err) {
+        setSheetError(err instanceof Error ? err.message : String(err));
+      }
+    }, 120);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [mode, model, rev, displayUnit, materialIdx, partNumber, partRev, units]);
+
+  // Release the drawing's offscreen WebGL context with the workspace.
+  useEffect(() => () => drawingMod.current?.disposeDrawingRenderer(), []);
+
+  const downloadSheet = () => {
+    if (!sheet || !model) return;
+    sheet.canvas.toBlob((blob) => {
+      if (!blob) return;
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `${model.name.replace(/[^\w.-]+/g, "_")}-drawing.png`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    }, "image/png");
+  };
 
   const v = viewerRef.current;
   const setTool = (t: Tool) => {
@@ -293,6 +345,30 @@ export default function CadWorkspace({ file, compact = false, onPing, onOpenFull
           <span>{status}</span>
         </div>
       ) : null}
+      {mode === "drawing" && !compact ? (
+        <div className="cad-sheet">
+          <div className="cad-sheet-bar">
+            <span className="muted">
+              Third-angle projection of the visible geometry. Hide parts, explode or section in 3D to change it. Generated from CAD, not a released drawing.
+            </span>
+            <button type="button" className="action" disabled={!sheet} onClick={downloadSheet}>
+              <Download size={14} /> Download PNG
+            </button>
+          </div>
+          {sheetError ? (
+            <p className="cad-error" role="alert">
+              The drawing could not be generated: {sheetError}
+            </p>
+          ) : sheet ? (
+            <img className="cad-sheet-img" src={sheet.url} alt={`Generated drawing of ${model?.name ?? "the model"}`} />
+          ) : (
+            <div className="cad-overlay">
+              <div className="cad-spinner" />
+              <span>Generating drawing</span>
+            </div>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 
@@ -316,6 +392,15 @@ export default function CadWorkspace({ file, compact = false, onPing, onOpenFull
     <div className="cadws" tabIndex={-1} onKeyDown={onKeyDown}>
       {fileInput}
       <div className="cad-bar" role="toolbar" aria-label="CAD tools">
+        <div className="ec-seg cad-seg" role="radiogroup" aria-label="View">
+          <button type="button" role="radio" aria-checked={mode === "3d"} className={mode === "3d" ? "on" : ""} onClick={() => setMode("3d")}>
+            3D
+          </button>
+          <button type="button" role="radio" aria-checked={mode === "drawing"} className={mode === "drawing" ? "on" : ""} onClick={() => setMode("drawing")}>
+            Drawing
+          </button>
+        </div>
+        <span className="cad-sep" />
         {TOOLS.map(({ id, label, key, Icon }) => (
           <button key={id} type="button" className={`cad-tool${tool === id ? " on" : ""}`} title={`${label} (${key.toUpperCase()})`} onClick={() => setTool(id)}>
             <Icon size={16} />

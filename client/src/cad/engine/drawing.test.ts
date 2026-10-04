@@ -58,7 +58,12 @@ test("one callout per pattern and per standalone hole", () => {
 test("callouts and dimensions follow the display unit", () => {
   const a = drawingAnnotations(sampleParts(), new Units("mm", 25.4));
   assert.equal(a.dimensions.x, "95.25");
-  assert.equal(a.callouts[0].lines[0], "4X Ø9.53 THRU");
+  // Every 0.375 in hole reads the same in millimetres, including the upright's.
+  assert.deepEqual(a.callouts.map((c) => c.lines.join(" / ")), [
+    "4X Ø9.53 THRU / ⌴ Ø15.88 ↧ 3.18",
+    "Ø9.53 THRU / ⌴ Ø15.88 ↧ 3.18",
+    "Ø19.05 THRU",
+  ]);
 });
 
 test("nothing visible gives an empty sheet", () => {
