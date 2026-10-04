@@ -1,0 +1,17 @@
+bundle:
+  name: umw
+
+resources:
+  apps:
+    app:
+      name: umw
+      description: Unified Mission Workbench
+      source_code_path: ./
+      lifecycle:
+        started: true
+
+targets:
+  default:
+    default: true
+    workspace:
+      host: https://dbc-045433f3-7964.cloud.databricks.com
