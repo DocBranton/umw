@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { Suspense, lazy, useState } from "react";
 import { Activity, BarChart3, ChevronDown, Shield, Wrench } from "lucide-react";
 import type { Opportunity } from "@/lib/gmw-data";
+
+const CadWorkspace = lazy(() => import("@/cad/CadWorkspace"));
 
 const TABS = [
   "Overview",
@@ -290,10 +292,13 @@ export function EngOverview({
           ) : (
             <div className="ec-part is-media">
               <div className="ec-media">
-                <img
-                  src={partTab === "Drawings" ? "/assets/hinge-drawing.jpg" : partTab === "3D Model" ? "/assets/am-hinge.jpg" : selected.img}
-                  alt={partTab}
-                />
+                {partTab === "3D Model" ? (
+                  <Suspense fallback={<span className="muted">Loading 3D viewer…</span>}>
+                    <CadWorkspace compact onPing={onPing} onOpenFull={() => onTab("History")} />
+                  </Suspense>
+                ) : (
+                  <img src={partTab === "Drawings" ? "/assets/hinge-drawing.jpg" : selected.img} alt={partTab} />
+                )}
               </div>
               <aside className="ec-alt">
                 <strong>{partTab}</strong>
@@ -301,7 +306,7 @@ export function EngOverview({
                   {partTab === "Drawings"
                     ? "Primary 2D drawing. Dimensions stay with the requirements baseline."
                     : partTab === "3D Model"
-                      ? "Additive candidate. The validated model is the reconstruction target."
+                      ? "Interactive model. Open Verified CAD to measure, section and review recognized features."
                       : "In-service condition of the current bracket."}
                 </p>
               </aside>

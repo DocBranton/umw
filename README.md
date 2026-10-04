@@ -16,3 +16,16 @@ npm run dev
 ```
 
 Deploy with the Databricks CLI from this directory. The app name is `umw`.
+
+## CAD
+
+Engineering › Verified Engineering CAD opens STEP, IGES, BREP, STL, OBJ and glTF files in the browser. Files are not uploaded. A CAD file added to the evidence package opens there; without one, a built-in sample bracket loads. The Overview 3D Model tab shows a preview.
+
+- `client/src/cad/engine/` is the geometry engine, ported from `c-engineering-workbench`: loaders, mass properties, face classification, feature recognition, viewer.
+- `client/public/cad/occt-worker.js` runs OpenCascade (`client/public/vendor/occt/`, LGPL-2.1, unmodified) in a Web Worker for STEP, IGES and BREP.
+- Recognized holes, counterbores, fillets, bosses and hole patterns are proposals. Each carries a confidence from its fit residual and the evidence it rests on. An engineer validates or rejects it.
+- three.js and the worker load only when the CAD view opens.
+
+```bash
+npm run test:cad
+```
