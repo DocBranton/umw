@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "client/src/cad/**"
+      - "client/e2e/**"
       - "client/src/components/workbench.tsx"
       - "client/src/components/eng-overview.tsx"
       - "client/public/cad/**"
@@ -18,6 +19,7 @@ on:
       - "claude/cad-*"
     paths:
       - "client/src/cad/**"
+      - "client/e2e/**"
       - "client/src/components/workbench.tsx"
       - "client/src/components/eng-overview.tsx"
       - "client/public/cad/**"
@@ -60,3 +62,59 @@ jobs:
 
       - name: CAD tests
         run: npm run test:cad
+
+  browser:
+    # Production client build in headless Chromium: 3D preview, Verified CAD,
+    # feature review, drawing, STEP import through the OpenCascade worker, and a
+    # STEP evidence upload. Fixtures are CAx-IF test models from occt-import-js,
+    # pinned to a commit and fetched at run time (not committed here).
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build client
+        run: npm run build:client
+
+      - name: Install Playwright (not saved to package.json)
+        run: |
+          npm install --no-save playwright@1.56.0
+          npx playwright install --with-deps chromium
+
+      - name: Fetch STEP fixtures
+        run: |
+          mkdir -p e2e-fixtures
+          for f in io1-cm-214.stp as1-tu-203.stp; do
+            curl -fsSL -o "e2e-fixtures/$f" "https://raw.githubusercontent.com/kovacsv/occt-import-js/41e470890ae0f9dc69ac50ffd5fc73e03576f4eb/test/testfiles/cax-if/$f"
+          done
+
+      - name: Serve the build
+        run: |
+          (cd client/dist && python3 -m http.server 4173 > /dev/null 2>&1 &)
+          sleep 1
+          curl -fsS -o /dev/null http://localhost:4173/
+
+      - name: Browser tests
+        run: node client/e2e/cad.e2e.mjs
+        env:
+          BASE_URL: http://localhost:4173/
+          FIXTURES: e2e-fixtures
+          ARTIFACTS: e2e-artifacts
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cad-e2e-screenshots-${{ github.run_id }}
+          path: e2e-artifacts
+          retention-days: 7

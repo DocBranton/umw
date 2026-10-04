@@ -77,7 +77,11 @@ export default function CadWorkspace({ file, compact = false, onPing, onOpenFull
   const [sheet, setSheet] = useState<{ url: string; canvas: HTMLCanvasElement } | null>(null);
   const [sheetError, setSheetError] = useState<string | null>(null);
   const drawingMod = useRef<typeof import("./engine/drawing-render") | null>(null);
-  const ping = useCallback((m: string) => onPing?.(m), [onPing]);
+  // Parents pass a new onPing on every render. Read it through a ref so a parent
+  // re-render (a toast, a review) never re-runs the load effect and reloads the sample.
+  const onPingRef = useRef(onPing);
+  onPingRef.current = onPing;
+  const ping = useCallback((m: string) => onPingRef.current?.(m), []);
 
   // Create the viewer once per mount.
   useEffect(() => {
