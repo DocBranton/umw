@@ -68,7 +68,11 @@ export default function CadWorkspace({ file, compact = false, onPing, onOpenFull
   const [reviews, setReviews] = useState<Record<string, ReviewStatus>>({});
   const [materialIdx, setMaterialIdx] = useState(0);
   const [displayUnit, setDisplayUnit] = useState<DisplayUnit>("in");
-  const ping = useCallback((m: string) => onPing?.(m), [onPing]);
+  // Parents pass a new onPing on every render. Read it through a ref so a parent
+  // re-render (a toast, a review) never re-runs the load effect and reloads the sample.
+  const onPingRef = useRef(onPing);
+  onPingRef.current = onPing;
+  const ping = useCallback((m: string) => onPingRef.current?.(m), []);
 
   // Create the viewer once per mount.
   useEffect(() => {
