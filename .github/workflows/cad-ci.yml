@@ -1,0 +1,67 @@
+name: CAD CI
+
+on:
+  pull_request:
+    paths:
+      - "client/src/cad/**"
+      - "client/src/components/workbench.tsx"
+      - "client/src/components/eng-overview.tsx"
+      - "client/public/cad/**"
+      - "client/public/vendor/occt/**"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig.client.json"
+      - ".github/workflows/cad-ci.yml"
+  push:
+    branches:
+      - "claude/cad-port"
+      - "claude/cad-*"
+    paths:
+      - "client/src/cad/**"
+      - "client/src/components/workbench.tsx"
+      - "client/src/components/eng-overview.tsx"
+      - "client/public/cad/**"
+      - "client/public/vendor/occt/**"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig.client.json"
+      - ".github/workflows/cad-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cad-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # Task 0 intentionally uses npm install once because PR #1 added three
+      # dependencies without refreshing package-lock.json. Once the lockfile is
+      # committed, change this to npm ci so future PRs prove lockfile fidelity.
+      - name: Install dependencies
+        run: npm install
+
+      - name: Verify lockfile is current
+        run: git diff --exit-code -- package-lock.json
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Production build
+        run: npm run build
+
+      - name: CAD tests
+        run: npm run test:cad
