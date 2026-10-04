@@ -13,7 +13,7 @@
     "typecheck": "tsc -b tsconfig.server.json && tsc -b tsconfig.client.json",
     "sync": "appkit plugin sync --write --silent",
     "typegen": "appkit generate-types",
-    "test:cad": "tsx --test client/src/cad/engine/*.test.ts"
+    "test:cad": "tsx --test \"client/src/cad/**/*.test.ts\""
   },
   "license": "UNLICENSED",
   "dependencies": {

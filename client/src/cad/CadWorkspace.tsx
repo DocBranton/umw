@@ -21,10 +21,11 @@ import { analyzePart, newCounters } from "./engine/analysis";
 import { buildSampleBracket } from "./engine/sample";
 import { loadCadFile } from "./engine/loaders";
 import { Units, type DisplayUnit } from "./engine/units";
-import type { ModelData, ReviewStatus } from "./engine/types";
+import type { ModelData } from "./engine/types";
 import { CadTree } from "./CadTree";
 import { CadDetails } from "./CadDetails";
 import { MATERIALS } from "./labels";
+import { emptySession, featureKey, modelKey, type CadSession, type FeatureKey } from "./links";
 import "./cad.css";
 
 export interface CadWorkspaceProps {
@@ -38,6 +39,22 @@ export interface CadWorkspaceProps {
   /** Shown in the generated drawing's title block. */
   partNumber?: string;
   rev?: string;
+  /** Requirements a feature can be linked to. Without them, linking is hidden. */
+  requirements?: readonly LinkableRequirement[];
+  /** Reviews and requirement links for the loaded model. Controlled when given with onSessionChange. */
+  session?: CadSession;
+  onSessionChange?: (next: CadSession) => void;
+  /** Called once a model is analyzed, with its key and recognized features. */
+  onModelLoaded?: (info: { key: string; name: string; features: FeatureKey[] }) => void;
+  /** Select and frame this feature once it exists. A new nonce re-applies it. */
+  focus?: { key: FeatureKey; nonce: number } | null;
+}
+
+export interface LinkableRequirement {
+  id: string;
+  name: string;
+  value: string;
+  status: string;
 }
 
 const TOOLS: { id: Tool; label: string; key: string; Icon: typeof Hand }[] = [
@@ -49,7 +66,19 @@ const TOOLS: { id: Tool; label: string; key: string; Icon: typeof Hand }[] = [
 ];
 const VIEWS: ViewName[] = ["iso", "front", "back", "top", "bottom", "left", "right"];
 
-export default function CadWorkspace({ file, compact = false, onPing, onOpenFull, partNumber, rev: partRev }: CadWorkspaceProps) {
+export default function CadWorkspace({
+  file,
+  compact = false,
+  onPing,
+  onOpenFull,
+  partNumber,
+  rev: partRev,
+  requirements,
+  session: sessionProp,
+  onSessionChange,
+  onModelLoaded,
+  focus,
+}: CadWorkspaceProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const labelsRef = useRef<HTMLDivElement>(null);
   const cubeRef = useRef<HTMLDivElement>(null);
@@ -70,7 +99,13 @@ export default function CadWorkspace({ file, compact = false, onPing, onOpenFull
   const [pick, setPick] = useState<PickMode>("part");
   const [panel, setPanel] = useState<"section" | "explode" | null>(null);
   const [measure, setMeasure] = useState<{ count: number; result: MeasureResult | null; firstFace?: string } | null>(null);
-  const [reviews, setReviews] = useState<Record<string, ReviewStatus>>({});
+  const [localSession, setLocalSession] = useState<CadSession>(emptySession);
+  const session = sessionProp ?? localSession;
+  const updateSession = (fn: (s: CadSession) => CadSession) => {
+    const next = fn(session);
+    if (onSessionChange) onSessionChange(next);
+    else setLocalSession(next);
+  };
   const [materialIdx, setMaterialIdx] = useState(0);
   const [displayUnit, setDisplayUnit] = useState<DisplayUnit>("in");
   const [mode, setMode] = useState<"3d" | "drawing">("3d");
@@ -82,6 +117,8 @@ export default function CadWorkspace({ file, compact = false, onPing, onOpenFull
   const onPingRef = useRef(onPing);
   onPingRef.current = onPing;
   const ping = useCallback((m: string) => onPingRef.current?.(m), []);
+  const onModelLoadedRef = useRef(onModelLoaded);
+  onModelLoadedRef.current = onModelLoaded;
 
   // Create the viewer once per mount.
   useEffect(() => {
@@ -125,7 +162,7 @@ export default function CadWorkspace({ file, compact = false, onPing, onOpenFull
       v.setModel(m);
       setModel(m);
       setSelection(null);
-      setReviews({});
+      setLocalSession(emptySession());
       setError(null);
       bump();
       // Analyze part by part so the page stays responsive.
@@ -146,6 +183,12 @@ export default function CadWorkspace({ file, compact = false, onPing, onOpenFull
       setStatus(`${n} features recognized in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
       v.refreshAnnotations();
       bump();
+      const triangles = m.meshes.reduce((t, mesh) => t + mesh.index.length / 3, 0);
+      onModelLoadedRef.current?.({
+        key: modelKey(m.fileName, m.meshes.length, triangles),
+        name: m.name,
+        features: v.parts.flatMap((p) => (p.data?.features ?? []).map((f) => featureKey(p.name, f.name))),
+      });
     },
     [units, bump],
   );
@@ -173,6 +216,23 @@ export default function CadWorkspace({ file, compact = false, onPing, onOpenFull
     if (file) void openFile(file);
     else void openModel(buildSampleBracket());
   }, [file, openFile, openModel]);
+
+  // Select a requested feature once analysis has produced it.
+  const appliedFocus = useRef<number | null>(null);
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!focus || !viewer || appliedFocus.current === focus.nonce) return;
+    for (const p of viewer.parts) {
+      const f = p.data?.features.find((x) => featureKey(p.name, x.name) === focus.key);
+      if (!f) continue;
+      appliedFocus.current = focus.nonce;
+      setMode("3d");
+      viewer.select({ kind: "feature", part: p.index, feature: f.name });
+      viewer.fitToSelection = true;
+      viewer.fit(true);
+      return;
+    }
+  }, [focus, rev]);
 
   // Generated drawing: rebuilt from what the viewer shows whenever it changes.
   useEffect(() => {
@@ -554,7 +614,8 @@ export default function CadWorkspace({ file, compact = false, onPing, onOpenFull
               parts={v.parts}
               units={units}
               selection={selection}
-              reviews={reviews}
+              reviews={session.reviews}
+              links={session.links}
               rev={rev}
               onSelect={select}
               onFit={fitSelection}
@@ -571,11 +632,14 @@ export default function CadWorkspace({ file, compact = false, onPing, onOpenFull
               units={units}
               selection={selection}
               featureOf={(s) => v.featureOf(s)}
-              reviews={reviews}
-              onReview={(key, s) => {
-                setReviews((r) => ({ ...r, [key]: s }));
-                ping(`${key.split("#")[1]} marked ${s.toLowerCase()}`);
+              reviews={session.reviews}
+              onReview={(key, st) => {
+                updateSession((cur) => ({ ...cur, reviews: { ...cur.reviews, [key]: st } }));
+                ping(`${key.split("#")[1]} marked ${st.toLowerCase()}`);
               }}
+              requirements={requirements}
+              links={session.links}
+              onLinksChange={(links) => updateSession((cur) => ({ ...cur, links }))}
               materialIdx={materialIdx}
               onMaterial={setMaterialIdx}
               onSelect={select}

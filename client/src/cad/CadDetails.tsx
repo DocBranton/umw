@@ -1,10 +1,12 @@
 import type { ReactNode } from "react";
 import * as THREE from "three";
-import { Check, X } from "lucide-react";
+import { Check, Link2, X } from "lucide-react";
 import type { Feature, ModelData, ReviewStatus } from "./engine/types";
 import type { Selection, ViewerPart } from "./engine/viewer";
 import type { Units } from "./engine/units";
 import { featureLabel, MATERIALS, reviewKey } from "./labels";
+import { addLink, removeLink, type LinkMap } from "./links";
+import type { LinkableRequirement } from "./CadWorkspace";
 
 type Row = [string, ReactNode] | null | false;
 
@@ -45,14 +47,20 @@ export function CadDetails({
   materialIdx,
   onMaterial,
   onSelect,
+  requirements,
+  links,
+  onLinksChange,
 }: {
   model: ModelData;
   parts: ViewerPart[];
   units: Units;
   selection: Selection | null;
   featureOf: (s: Selection | null) => Feature | null;
-  reviews: Record<string, ReviewStatus>;
+  reviews: Readonly<Record<string, ReviewStatus>>;
   onReview: (key: string, status: ReviewStatus) => void;
+  requirements?: readonly LinkableRequirement[];
+  links: LinkMap;
+  onLinksChange: (links: LinkMap) => void;
   materialIdx: number;
   onMaterial: (i: number) => void;
   onSelect: (s: Selection) => void;
@@ -102,6 +110,7 @@ export function CadDetails({
             ["Triangles", tris.toLocaleString()],
             ["Features", ready ? `${feats.length} recognized` : "Analyzing…"],
             feats.length > 0 && ["Review", ["Validated", "Inferred", "Rejected"].filter((s) => counts.get(s as ReviewStatus)).map((s) => `${counts.get(s as ReviewStatus)} ${s.toLowerCase()}`).join(", ")],
+            !!requirements && feats.length > 0 && ["Traceability", linkSummary(links)],
           ]}
         />
         <label className="cad-field">
@@ -250,6 +259,80 @@ export function CadDetails({
           ) : null}
         </div>
       </div>
+      {requirements ? <RequirementLinks featureKey={key} requirements={requirements} links={links} onLinksChange={onLinksChange} /> : null}
+    </div>
+  );
+}
+
+function linkSummary(links: LinkMap): string {
+  const features = Object.keys(links).length;
+  if (!features) return "No features linked to requirements";
+  const reqs = new Set(Object.values(links).flat()).size;
+  return `${features} feature${features === 1 ? "" : "s"} linked to ${reqs} requirement${reqs === 1 ? "" : "s"}`;
+}
+
+const REQ_CLASS = (status: string) => (status === "Validated" ? "ok" : status === "Unresolved" ? "gap" : "review");
+
+/** Requirements this feature traces to. Linking records traceability; it changes no status. */
+function RequirementLinks({
+  featureKey,
+  requirements,
+  links,
+  onLinksChange,
+}: {
+  featureKey: string;
+  requirements: readonly LinkableRequirement[];
+  links: LinkMap;
+  onLinksChange: (links: LinkMap) => void;
+}) {
+  const linked = links[featureKey] ?? [];
+  const byId = new Map(requirements.map((r) => [r.id, r]));
+  const available = requirements.filter((r) => !linked.includes(r.id));
+  return (
+    <div className="cad-prov cad-reqs">
+      <h5>
+        <Link2 size={13} /> Requirements
+      </h5>
+      {linked.length ? (
+        <ul className="cad-reqlist">
+          {linked.map((id) => {
+            const r = byId.get(id);
+            return (
+              <li key={id}>
+                <span>
+                  <b>{id}</b> {r ? `${r.name} · ${r.value}` : "(no longer in the baseline)"}
+                </span>
+                {r ? <span className={`state ${REQ_CLASS(r.status)}`}>{r.status}</span> : null}
+                <button type="button" className="cad-unlink" aria-label={`Unlink ${id}`} title={`Unlink ${id}`} onClick={() => onLinksChange(removeLink(links, featureKey, id))}>
+                  <X size={13} />
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <p className="muted cad-note">Not linked to a requirement yet.</p>
+      )}
+      {available.length ? (
+        <label className="cad-field">
+          <span>Link to requirement</span>
+          <select
+            value=""
+            aria-label="Link to requirement"
+            onChange={(e) => {
+              if (e.target.value) onLinksChange(addLink(links, featureKey, e.target.value));
+            }}
+          >
+            <option value="">Choose a requirement…</option>
+            {available.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.id} · {r.name} ({r.value})
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+      <p className="muted cad-note">Linking records traceability only. It doesn't change this feature's review or the requirement's status.</p>
     </div>
   );
 }

@@ -2794,3 +2794,8 @@ img { display: block; max-width: 100%; }
 .app.service-navy .svc-switch button.on { color: #041018; background: linear-gradient(180deg, #7ee7ff, #1494c8); }
 
 
+
+/* Requirements › linked CAD geometry */
+.req-geo { white-space: nowrap; }
+.req-geo .linkish + .linkish { margin-left: 8px; }
+.req-geo-note { margin: 8px 2px 0; font-size: 12px; }

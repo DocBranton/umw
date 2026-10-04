@@ -171,3 +171,13 @@
 .cad-sheet-bar .action:disabled { opacity: 0.5; cursor: default; }
 .cad-sheet-img { flex: 1; min-height: 0; width: 100%; object-fit: contain; background: #fff; padding: 8px; }
 .cad-sheet .cad-error { position: static; margin: 12px; }
+
+/* requirement links */
+.cad-linked { display: inline-grid; place-items: center; color: var(--cyan); flex: none; }
+.cad-reqs h5 { display: flex; align-items: center; gap: 6px; }
+.cad-reqlist { list-style: none; display: grid; gap: 6px; margin: 0; padding: 0; }
+.cad-reqlist li { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: rgba(5, 9, 16, 0.35); }
+.cad-reqlist li > span:first-child { flex: 1; min-width: 0; }
+.cad-reqlist b { color: var(--text); font-weight: 600; }
+.cad-unlink { color: var(--dim); display: grid; place-items: center; flex: none; }
+.cad-unlink:hover { color: var(--red); }
