@@ -162,3 +162,12 @@
 .ec-media > .cadws { width: 100%; }
 /* The Verified CAD band keeps the workspace's height instead of shrinking to fit. */
 .req-band.cad-band { flex: none; overflow: visible; }
+
+/* generated drawing view */
+.cad-sheet { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--bg-1); z-index: 2; }
+.cad-sheet-bar { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--line); font-size: 12px; }
+.cad-sheet-bar .muted { flex: 1; }
+.cad-sheet-bar .action { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.cad-sheet-bar .action:disabled { opacity: 0.5; cursor: default; }
+.cad-sheet-img { flex: 1; min-height: 0; width: 100%; object-fit: contain; background: #fff; padding: 8px; }
+.cad-sheet .cad-error { position: static; margin: 12px; }

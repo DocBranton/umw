@@ -24,7 +24,8 @@ Engineering › Verified Engineering CAD opens STEP, IGES, BREP, STL, OBJ and gl
 - `client/src/cad/engine/` is the geometry engine, ported from `c-engineering-workbench`: loaders, mass properties, face classification, feature recognition, viewer.
 - `client/public/cad/occt-worker.js` runs OpenCascade (`client/public/vendor/occt/`, LGPL-2.1, unmodified) in a Web Worker for STEP, IGES and BREP.
 - Recognized holes, counterbores, fillets, bosses and hole patterns are proposals. Each carries a confidence from its fit residual and the evidence it rests on. An engineer validates or rejects it.
-- three.js and the worker load only when the CAD view opens.
+- The Drawing view generates a third-angle sheet (front, top, right, isometric) from the visible geometry, with overall dimensions, hole callouts and a title block, and downloads it as PNG. It follows hidden parts, explode, section, units and material, and is marked as generated, not released.
+- three.js and the worker load only when the CAD view opens; the drawing renderer loads the first time the Drawing view opens.
 
 ```bash
 npm run test:cad

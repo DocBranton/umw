@@ -20,7 +20,7 @@ export class Units {
   }
 
   len(v: number, withUnit = true): string {
-    const s = this.toDisplay(v).toFixed(this.digits());
+    const s = roundHalfUp(this.toDisplay(v), this.digits()).toFixed(this.digits());
     return withUnit ? `${s} ${this.display}` : s;
   }
 
@@ -46,6 +46,15 @@ export class Units {
     if (this.display === "in") return `${num(g / 453.59237, 3)} lb`;
     return g >= 1000 ? `${num(g / 1000, 3)} kg` : `${num(g, 1)} g`;
   }
+}
+
+/**
+ * Round half away from zero. Plain toFixed rounds 9.525 down to 9.52 because the
+ * binary value is 9.52499…; a drawing must show the same size the same way every time.
+ */
+export function roundHalfUp(x: number, digits: number): number {
+  const f = 10 ** digits;
+  return (Math.sign(x) * Math.round(Math.abs(x) * f + 1e-7)) / f;
 }
 
 export function num(n: number, digits = 2): string {
