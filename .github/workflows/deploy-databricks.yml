@@ -1,0 +1,69 @@
+name: Deploy UMW to Databricks
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: umw-databricks
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DATABRICKS_HOST: https://dbc-045433f3-7964.cloud.databricks.com
+      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check deployment credential
+        run: |
+          if [ -z "$DATABRICKS_TOKEN" ]; then
+            echo "::error::Add the DATABRICKS_TOKEN repository secret on DocBranton/umw. A token on another repo is not visible here."
+            exit 1
+          fi
+      - name: Install Databricks CLI
+        uses: databricks/setup-cli@main
+      - name: Stage app source
+        run: |
+          mkdir -p "$RUNNER_TEMP/umw-deploy"
+          rsync -a \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='node_modules' \
+            --exclude='dist' \
+            --exclude='client/dist' \
+            --exclude='.env*' \
+            ./ "$RUNNER_TEMP/umw-deploy/"
+      - name: Upload app source
+        run: databricks workspace import-dir "$RUNNER_TEMP/umw-deploy" /Workspace/Shared/umw --overwrite
+      - name: Ensure the umw app exists
+        run: |
+          if databricks apps get umw --output json >/tmp/umw-app.json 2>/tmp/umw-app.err; then
+            echo "App umw already exists"
+          else
+            echo "Creating app umw"
+            databricks apps create --json '{"name":"umw","description":"Unified Mission Workbench"}'
+          fi
+      - name: Deploy umw
+        run: databricks apps deploy umw --source-code-path /Workspace/Shared/umw
+      - name: Check app status
+        run: |
+          for i in $(seq 1 40); do
+            state=$(databricks apps get umw --output json | jq -r '.app_status.state // empty')
+            url=$(databricks apps get umw --output json | jq -r '.url // empty')
+            echo "Attempt $i/40: ${state:-unknown} ${url}"
+            if [ "$state" = RUNNING ]; then
+              echo "UMW_URL=$url"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::umw did not reach RUNNING status."
+          databricks apps get umw --output json
+          exit 1
