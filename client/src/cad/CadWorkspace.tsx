@@ -25,7 +25,7 @@ import type { ModelData } from "./engine/types";
 import { CadTree } from "./CadTree";
 import { CadDetails } from "./CadDetails";
 import { MATERIALS } from "./labels";
-import { emptySession, featureKey, modelKey, type CadSession, type FeatureKey } from "./links";
+import { emptySession, featureKey, geometryHash, modelKey, recordLink, recordReview, type CadSession, type FeatureKey } from "./links";
 import "./cad.css";
 
 export interface CadWorkspaceProps {
@@ -43,7 +43,10 @@ export interface CadWorkspaceProps {
   requirements?: readonly LinkableRequirement[];
   /** Reviews and requirement links for the loaded model. Controlled when given with onSessionChange. */
   session?: CadSession;
-  onSessionChange?: (next: CadSession) => void;
+  /** Receives an updater, so rapid edits never overwrite each other. */
+  onSessionChange?: (update: (s: CadSession) => CadSession) => void;
+  /** Where reviews are kept, shown in the model summary (e.g. "Saved in this browser only"). */
+  storageNote?: string;
   /** Called once a model is analyzed, with its key and recognized features. */
   onModelLoaded?: (info: { key: string; name: string; features: FeatureKey[] }) => void;
   /** Select and frame this feature once it exists. A new nonce re-applies it. */
@@ -78,6 +81,7 @@ export default function CadWorkspace({
   onSessionChange,
   onModelLoaded,
   focus,
+  storageNote,
 }: CadWorkspaceProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const labelsRef = useRef<HTMLDivElement>(null);
@@ -102,9 +106,8 @@ export default function CadWorkspace({
   const [localSession, setLocalSession] = useState<CadSession>(emptySession);
   const session = sessionProp ?? localSession;
   const updateSession = (fn: (s: CadSession) => CadSession) => {
-    const next = fn(session);
-    if (onSessionChange) onSessionChange(next);
-    else setLocalSession(next);
+    if (onSessionChange) onSessionChange(fn);
+    else setLocalSession(fn);
   };
   const [materialIdx, setMaterialIdx] = useState(0);
   const [displayUnit, setDisplayUnit] = useState<DisplayUnit>("in");
@@ -185,7 +188,7 @@ export default function CadWorkspace({
       bump();
       const triangles = m.meshes.reduce((t, mesh) => t + mesh.index.length / 3, 0);
       onModelLoadedRef.current?.({
-        key: modelKey(m.fileName, m.meshes.length, triangles),
+        key: modelKey(m.fileName, m.meshes.length, triangles, geometryHash(m.meshes.flatMap((mesh) => [mesh.position, mesh.index]))),
         name: m.name,
         features: v.parts.flatMap((p) => (p.data?.features ?? []).map((f) => featureKey(p.name, f.name))),
       });
@@ -634,12 +637,13 @@ export default function CadWorkspace({
               featureOf={(s) => v.featureOf(s)}
               reviews={session.reviews}
               onReview={(key, st) => {
-                updateSession((cur) => ({ ...cur, reviews: { ...cur.reviews, [key]: st } }));
+                updateSession((cur) => recordReview(cur, key, st));
                 ping(`${key.split("#")[1]} marked ${st.toLowerCase()}`);
               }}
               requirements={requirements}
-              links={session.links}
-              onLinksChange={(links) => updateSession((cur) => ({ ...cur, links }))}
+              session={session}
+              onLink={(key, req, add) => updateSession((cur) => recordLink(cur, key, req, add))}
+              storageNote={storageNote}
               materialIdx={materialIdx}
               onMaterial={setMaterialIdx}
               onSelect={select}

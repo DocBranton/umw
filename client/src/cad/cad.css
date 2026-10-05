@@ -181,3 +181,8 @@
 .cad-reqlist b { color: var(--text); font-weight: 600; }
 .cad-unlink { color: var(--dim); display: grid; place-items: center; flex: none; }
 .cad-unlink:hover { color: var(--red); }
+
+/* review history */
+.cad-history ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 12px; }
+.cad-history li { display: flex; justify-content: space-between; gap: 8px; }
+.cad-history time { color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }

@@ -10,12 +10,43 @@ import type { ReviewStatus } from "./engine/types";
 export type FeatureKey = string;
 export type LinkMap = Readonly<Record<FeatureKey, readonly string[]>>;
 
+/** One engineer action, kept append-only so review history can be audited. */
+export type HistoryEntry =
+  | { at: string; feature: FeatureKey; kind: "review"; from: ReviewStatus; to: ReviewStatus; by?: string }
+  | { at: string; feature: FeatureKey; kind: "link" | "unlink"; requirement: string; by?: string };
+
 export interface CadSession {
   reviews: Readonly<Record<FeatureKey, ReviewStatus>>;
   links: LinkMap;
+  history: readonly HistoryEntry[];
 }
 
-export const emptySession = (): CadSession => ({ reviews: {}, links: {} });
+/** Older entries are dropped past this many per model. */
+export const HISTORY_LIMIT = 500;
+
+export const emptySession = (): CadSession => ({ reviews: {}, links: {}, history: [] });
+
+const appendHistory = (h: readonly HistoryEntry[], e: HistoryEntry) => [...h, e].slice(-HISTORY_LIMIT);
+
+/** Set a feature's review status and record the change. No-op if unchanged. */
+export function recordReview(s: CadSession, key: FeatureKey, to: ReviewStatus, at = new Date().toISOString(), by?: string): CadSession {
+  const from = s.reviews[key] ?? "Inferred";
+  if (from === to) return s;
+  const reviews = { ...s.reviews, [key]: to };
+  if (to === "Inferred") delete reviews[key];
+  return { ...s, reviews, history: appendHistory(s.history, { at, feature: key, kind: "review", from, to, ...(by ? { by } : {}) }) };
+}
+
+/** Add or remove a requirement link and record it. No-op if nothing changes. */
+export function recordLink(s: CadSession, key: FeatureKey, requirement: string, add: boolean, at = new Date().toISOString(), by?: string): CadSession {
+  const links = add ? addLink(s.links, key, requirement) : removeLink(s.links, key, requirement);
+  if (links === s.links) return s;
+  return { ...s, links, history: appendHistory(s.history, { at, feature: key, kind: add ? "link" : "unlink", requirement, ...(by ? { by } : {}) }) };
+}
+
+export function historyFor(s: CadSession, key: FeatureKey): HistoryEntry[] {
+  return s.history.filter((e) => e.feature === key);
+}
 
 export const featureKey = (partName: string, featureName: string): FeatureKey => `${partName}#${featureName}`;
 
@@ -24,9 +55,27 @@ export function splitKey(key: FeatureKey): { part: string; feature: string } {
   return i < 0 ? { part: key, feature: "" } : { part: key.slice(0, i), feature: key.slice(i + 1) };
 }
 
-/** Identifies one loaded model; links and reviews are kept per model. */
-export function modelKey(fileName: string, partCount: number, triangles: number): string {
-  return `${fileName}|${partCount}|${triangles}`;
+/**
+ * Identifies one loaded model; links and reviews are kept per model. The geometry
+ * hash keeps a changed file with the same name from inheriting old reviews.
+ */
+export function modelKey(fileName: string, partCount: number, triangles: number, hash = ""): string {
+  return `${fileName}|${partCount}|${triangles}${hash ? `|${hash}` : ""}`;
+}
+
+/** FNV-1a over the raw vertex data. Fast enough for multi-million-vertex models. */
+export function geometryHash(arrays: readonly (Float32Array | Uint32Array)[]): string {
+  let h = 0x811c9dc5;
+  for (const a of arrays) {
+    const words = new Uint32Array(a.buffer, a.byteOffset, a.length);
+    for (let i = 0; i < words.length; i++) {
+      h ^= words[i];
+      h = Math.imul(h, 0x01000193);
+    }
+    h ^= words.length;
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, "0");
 }
 
 export function addLink(links: LinkMap, key: FeatureKey, reqId: string): LinkMap {

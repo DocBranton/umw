@@ -90,6 +90,23 @@ try {
     const title = (await page.locator(".cad-title").textContent()) ?? "";
     check("Requirement link opens the feature in Verified CAD", /Hole001/.test(title));
     check("Review and links survive the phase switch", /Validated/.test(title) && /REQ-003/.test((await page.locator(".cad-reqlist").textContent()) ?? ""));
+
+    // Saved reviews (present once persistence ships): reload the page and come back.
+    if (/History/.test((await page.locator(".cad-details").textContent()) ?? "")) {
+      await page.reload();
+      await page.locator('button:has-text("Engineering")').first().click();
+      await page.locator("button", { hasText: "Technical Data" }).first().click();
+      await page.locator(".phase", { hasText: "Verified CAD" }).click();
+      await waitStatus(/features recognized/);
+      check("Details say where reviews are saved", /Saved in this browser only/.test((await page.locator(".cad-details").textContent()) ?? ""));
+      await page.locator(".cad-search").fill("Hole001");
+      await page.locator(".cad-row", { hasText: "Hole001" }).first().click();
+      await page.locator(".cad-search").fill("");
+      const after = (await page.locator(".cad-details").textContent()) ?? "";
+      check("Review and links survive a page reload", /Validated/.test((await page.locator(".cad-title").textContent()) ?? "") && /REQ-002/.test(after) && /REQ-003/.test(after));
+      check("History records the engineer's actions", /History/.test(after) && /Linked REQ-003/.test(after) && /Validated/.test(after));
+      await page.screenshot({ path: join(OUT, "2c-after-reload.png") });
+    }
   }
 
   // Generated drawing (present once the drawing view ships)
