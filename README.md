@@ -30,3 +30,22 @@ Engineering › Verified Engineering CAD opens STEP, IGES, BREP, STL, OBJ and gl
 ```bash
 npm run test:cad
 ```
+
+### Review trail
+
+Every validate, reject, return-to-inferred, link and unlink on a recognized feature is recorded with who did it and when, and shown in the feature's History.
+
+- **With Lakebase** (the app has a `postgres` resource): actions are appended to `umw.cad_events` and shared with everyone on the project. The server takes the engineer from the Databricks Apps sign-in (`X-Forwarded-User`, `X-Forwarded-Email`), never from the browser, and refuses changes without a signed-in user. The table rejects UPDATE, DELETE and TRUNCATE, and current status is replayed from the events, so the trail and the state can't disagree. Concurrent changes to one model are serialized.
+- **Without Lakebase**: reviews stay in each browser (localStorage) and are not attributed. The details panel says which applies.
+
+To turn on Lakebase:
+
+1. Create a Lakebase Postgres project (Compute › Lakebase), or reuse one. Note its branch and database resource names: `databricks postgres list-branches projects/<project>` and `databricks postgres list-databases <branch>`.
+2. Uncomment the `variables` and `resources` blocks in `databricks.yml` and the `env` block in `app.yaml`, and fill in the branch and database under `targets.default.variables`.
+3. `databricks bundle deploy`, then start the app. On first start the app's service principal creates `umw.cad_events` and owns it. Deploy before running `npm run dev` against the same database, so your own user doesn't end up owning the table.
+
+Local development without Databricks headers records changes as `local-dev` (set `CAD_DEV_USER` to change the name). This applies only when `NODE_ENV=development`.
+
+```bash
+CAD_TEST_DATABASE_URL=postgres://postgres@localhost:5432/postgres npm run test:server   # needs a scratch Postgres
+```

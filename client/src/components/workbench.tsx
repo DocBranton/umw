@@ -44,8 +44,8 @@ import {
 } from "@/lib/gmw-data";
 import { MissionPortfolioView, PortfolioView } from "@/components/portfolio";
 // The CAD link model is plain data (no three.js), so it is safe to import eagerly.
-import { emptySession, featuresFor, pruneLinks, splitKey, type CadSession, type FeatureKey } from "@/cad/links";
-import { BrowserSessionStore } from "@/cad/store";
+import { emptySession, featuresFor, pruneLinks, splitKey, visibleSession, type CadAction, type CadSession, type FeatureKey } from "@/cad/links";
+import { chooseSessionStore, type SessionStore } from "@/cad/store";
 
 // three.js and the OpenCascade worker load only when the CAD workspace opens.
 const CadWorkspace = lazy(() => import("@/cad/CadWorkspace"));
@@ -1664,40 +1664,88 @@ function EngineeringView({
   const [sheet, setSheet] = useState<"drawing" | "image">("drawing");
   const [uploads, setUploads] = useState<{ id: string; name: string; kind: string; url?: string; state: string }[]>([]);
   const [cadFile, setCadFile] = useState<File | null>(null);
-  // Feature reviews and requirement links, per CAD model, for this session.
+  // Feature reviews and requirement links, per CAD model.
   const [cadSessions, setCadSessions] = useState<Record<string, CadSession>>({});
-  const [cadModel, setCadModel] = useState<{ key: string; name: string } | null>(null);
+  const cadSessionsRef = useRef(cadSessions);
+  const [cadModel, setCadModel] = useState<{ key: string; name: string; features: ReadonlySet<FeatureKey> } | null>(null);
   const [cadFocus, setCadFocus] = useState<{ key: FeatureKey; nonce: number } | null>(null);
-  const cadSession = (cadModel && cadSessions[cadModel.key]) || null;
-  // Reviews and links persist per project and model. Browser storage for now; a
-  // server-backed store can replace it behind the same interface.
-  const cadStore = useMemo(() => new BrowserSessionStore(), []);
-  const saveWarned = useRef(false);
-  // onPing is recreated on every render; read it through a ref so saving runs only on real changes.
+  // Only reviews and links that apply to the loaded model and current requirements are shown.
+  const reqIdList = requirements.map((r) => r.id).join("\n");
+  const reqIds = useMemo(() => new Set(reqIdList.split("\n")), [reqIdList]);
+  const cadSessionRaw = cadModel ? cadSessions[cadModel.key] : undefined;
+  const cadSession = useMemo(
+    () => (cadModel && cadSessionRaw ? visibleSession(cadSessionRaw, cadModel.features, reqIds) : null),
+    [cadModel, cadSessionRaw, reqIds],
+  );
+  // The shared Lakebase trail when the server has it, otherwise this browser.
+  const cadStoreReady = useMemo(() => chooseSessionStore(import.meta.env.BASE_URL), []);
+  const [cadStore, setCadStore] = useState<SessionStore | null>(null);
+  useEffect(() => {
+    let live = true;
+    void cadStoreReady.then((s) => live && setCadStore(s));
+    return () => {
+      live = false;
+    };
+  }, [cadStoreReady]);
+  // onPing is recreated on every render; async work reads it through a ref.
   const pingRef = useRef(onPing);
   pingRef.current = onPing;
-  useEffect(() => {
-    if (!cadModel || !cadSession) return;
-    if (!cadStore.save(selected.id, cadModel.key, cadSession) && !saveWarned.current) {
-      saveWarned.current = true;
-      pingRef.current("Reviews and links can't be saved in this browser. They'll be lost when you leave the page.");
+  const saveWarned = useRef(false);
+  const cadLoadToken = useRef(0);
+  const cadQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const putCadSession = (key: string, session: CadSession) => {
+    cadSessionsRef.current = { ...cadSessionsRef.current, [key]: session };
+    setCadSessions(cadSessionsRef.current);
+  };
+  const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+  async function onCadModelLoaded(info: { key: string; name: string; features: FeatureKey[] }) {
+    const features = new Set(info.features);
+    setCadModel({ key: info.key, name: info.name, features });
+    const token = ++cadLoadToken.current;
+    const project = selected.id;
+    const store = await cadStoreReady;
+    const inMemory = cadSessionsRef.current[info.key] ?? null;
+    let prev = inMemory;
+    // A shared trail is fresher than memory (teammates may have changed it); this browser's copy is not.
+    if (store.shared || !inMemory) {
+      try {
+        prev = (await store.load(project, info.key)) ?? inMemory;
+      } catch (e) {
+        pingRef.current(`The shared review trail couldn't be loaded: ${errText(e)}`);
+      }
     }
-  }, [cadSession, cadModel, cadStore, selected.id]);
-  function onCadModelLoaded(info: { key: string; name: string; features: FeatureKey[] }) {
-    setCadModel({ key: info.key, name: info.name });
-    const prev = cadSessions[info.key] ?? cadStore.load(selected.id, info.key);
-    if (!prev) {
-      setCadSessions((cur) => ({ ...cur, [info.key]: emptySession() }));
-      return;
+    if (token !== cadLoadToken.current) return;
+    putCadSession(info.key, prev ?? emptySession());
+    const dropped = prev ? pruneLinks(prev.links, features, reqIds).droppedLinks : 0;
+    if (dropped) {
+      pingRef.current(`${dropped} requirement link${dropped === 1 ? " isn't" : "s aren't"} shown: the feature or requirement is no longer present`);
     }
-    // Drop links and reviews for features this model no longer has.
-    const present = new Set(info.features);
-    const pruned = pruneLinks(prev.links, present, new Set(requirements.map((r) => r.id)));
-    const reviews = Object.fromEntries(Object.entries(prev.reviews).filter(([k]) => present.has(k)));
-    setCadSessions((cur) => ({ ...cur, [info.key]: { reviews, links: pruned.links, history: prev.history } }));
-    if (pruned.droppedLinks) {
-      onPing(`${pruned.droppedLinks} requirement link${pruned.droppedLinks === 1 ? "" : "s"} dropped: the feature or requirement is no longer present`);
-    }
+  }
+
+  // Actions run one at a time, in order, each from the latest recorded session.
+  function onCadAction(action: CadAction): Promise<boolean> {
+    if (!cadModel) return Promise.resolve(false);
+    const key = cadModel.key;
+    const project = selected.id;
+    const run = async () => {
+      const store = await cadStoreReady;
+      try {
+        const { session, saved } = await store.record(project, key, action, cadSessionsRef.current[key] ?? emptySession());
+        putCadSession(key, session);
+        if (!saved && !saveWarned.current) {
+          saveWarned.current = true;
+          pingRef.current("Reviews and links can't be saved in this browser. They'll be lost when you leave the page.");
+        }
+        return true;
+      } catch (e) {
+        pingRef.current(`Not recorded: ${errText(e)}`);
+        return false;
+      }
+    };
+    const next = cadQueue.current.then(run);
+    cadQueue.current = next;
+    return next;
   }
   const [hiddenEvidence, setHiddenEvidence] = useState<string[]>([]);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -2129,12 +2177,8 @@ function EngineeringView({
                 partNumber={selected.part}
                 requirements={requirements}
                 session={cadSession ?? emptySession()}
-                onSessionChange={(update) => {
-                  if (!cadModel) return;
-                  const key = cadModel.key;
-                  setCadSessions((cur) => ({ ...cur, [key]: update(cur[key] ?? emptySession()) }));
-                }}
-                storageNote={cadStore.label}
+                onAction={onCadAction}
+                storageNote={cadStore?.label ?? "Checking where reviews are saved…"}
                 onModelLoaded={onCadModelLoaded}
                 focus={cadFocus}
               />

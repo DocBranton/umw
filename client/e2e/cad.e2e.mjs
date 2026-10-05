@@ -34,7 +34,12 @@ page.on("response", (r) => {
 const status = (sel = ".cadws:not(.compact) .cad-status") => page.locator(sel).textContent({ timeout: 5000 }).catch(() => "");
 const waitStatus = (re, sel = ".cadws:not(.compact) .cad-status") =>
   page.waitForFunction(([s, src]) => new RegExp(src).test(document.querySelector(s)?.textContent ?? ""), [sel, re.source], { timeout: 120000 });
+const waitStatusOn = (p, re, sel = ".cadws:not(.compact) .cad-status") =>
+  p.waitForFunction(([s, src]) => new RegExp(src).test(document.querySelector(s)?.textContent ?? ""), [sel, re.source], { timeout: 120000 });
 const featureCount = async () => Number((await status()).match(/(\d+) features recognized/)?.[1] ?? -1);
+
+// The app server answers /api/cad/status; without Lakebase it says "browser".
+await page.route("**/api/cad/status", (r) => r.fulfill({ json: { store: "browser" } }));
 
 try {
   await page.goto(BASE);
@@ -138,6 +143,71 @@ try {
 } catch (e) {
   check("browser run completed", false, e instanceof Error ? e.message.split("\n")[0] : String(e));
   await page.screenshot({ path: join(OUT, "failure.png") }).catch(() => {});
+}
+
+// Shared review trail (Lakebase). A stand-in for the app server: it keeps events in
+// memory, stamps each with the signed-in user, and can refuse writes.
+{
+  const ctx = await browser.newContext({ viewport: { width: 1600, height: 900 } });
+  const shared = await ctx.newPage();
+  shared.on("pageerror", (e) => errors.push(`page error: ${e.message}`));
+  const events = [];
+  let refuse = false;
+  let posts = 0;
+  await shared.route("**/api/cad/status", (r) => r.fulfill({ json: { store: "lakebase", user: { id: "1001", email: "alice@example.mil" } } }));
+  await shared.route("**/api/cad/events**", async (r) => {
+    const req = r.request();
+    if (req.method() === "POST") {
+      posts++;
+      if (refuse) return r.fulfill({ status: 401, json: { error: "Sign in to record reviews." } });
+      const { action, ...rest } = req.postDataJSON();
+      if ("by" in action || "by" in rest) return r.fulfill({ status: 400, json: { error: "client sent an actor" } });
+      const at = new Date().toISOString();
+      if (action.kind === "review") {
+        const last = events.filter((e) => e.kind === "review" && e.feature === action.feature).pop();
+        const from = last?.to ?? "Inferred";
+        if (from !== action.to) events.push({ at, feature: action.feature, kind: "review", from, to: action.to, by: "alice@example.mil" });
+      } else events.push({ at, feature: action.feature, kind: action.kind, requirement: action.requirement, by: "alice@example.mil" });
+    }
+    return r.fulfill({ json: { events } });
+  });
+  const openHole = async () => {
+    await shared.locator('button:has-text("Engineering")').first().click();
+    await shared.locator("button", { hasText: "Technical Data" }).first().click();
+    await shared.locator(".phase", { hasText: "Verified CAD" }).click();
+    await waitStatusOn(shared, /features recognized/);
+  };
+  const selectHole = async () => {
+    await shared.locator(".cad-search").fill("Hole001");
+    await shared.locator(".cad-row", { hasText: "Hole001" }).first().click();
+    await shared.locator(".cad-search").fill("");
+  };
+  try {
+    await shared.goto(BASE);
+    await openHole();
+    check("Shared trail: details say reviews are shared and attributed", /Shared in Lakebase · recorded as alice@example\.mil/.test((await shared.locator(".cad-details").textContent()) ?? ""));
+    await selectHole();
+    await shared.getByRole("button", { name: "Validate" }).click();
+    await shared.waitForFunction(() => /Validated/.test(document.querySelector(".cad-title")?.textContent ?? ""), null, { timeout: 10000 });
+    const hist = (await shared.locator(".cad-history").textContent()) ?? "";
+    check("Shared trail: validation is recorded under the signed-in engineer", posts === 1 && /alice@example\.mil/.test(hist), hist);
+
+    refuse = true;
+    await shared.getByRole("button", { name: "Reject" }).click();
+    await shared.waitForFunction(() => /Not recorded/.test(document.querySelector(".toast")?.textContent ?? ""), null, { timeout: 10000 });
+    check("Shared trail: a refused change is not shown as made", /Validated/.test((await shared.locator(".cad-title").textContent()) ?? ""));
+    refuse = false;
+
+    await shared.reload();
+    await openHole();
+    await selectHole();
+    check("Shared trail: review comes back from the server after reload", /Validated/.test((await shared.locator(".cad-title").textContent()) ?? ""));
+    await shared.screenshot({ path: join(OUT, "5-shared-trail.png") });
+  } catch (e) {
+    check("shared trail run completed", false, e instanceof Error ? e.message.split("\n")[0] : String(e));
+    await shared.screenshot({ path: join(OUT, "failure-shared.png") }).catch(() => {});
+  }
+  await ctx.close();
 }
 
 check("no console errors", errors.length === 0, errors.slice(0, 3).join(" | "));

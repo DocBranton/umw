@@ -44,6 +44,24 @@ export function recordLink(s: CadSession, key: FeatureKey, requirement: string, 
   return { ...s, links, history: appendHistory(s.history, { at, feature: key, kind: add ? "link" : "unlink", requirement, ...(by ? { by } : {}) }) };
 }
 
+/** One engineer action on a feature, as sent to a store. */
+export type CadAction =
+  | { kind: "review"; feature: FeatureKey; to: ReviewStatus }
+  | { kind: "link" | "unlink"; feature: FeatureKey; requirement: string };
+
+export function applyAction(s: CadSession, a: CadAction, at?: string, by?: string): CadSession {
+  return a.kind === "review" ? recordReview(s, a.feature, a.to, at, by) : recordLink(s, a.feature, a.requirement, a.kind === "link", at, by);
+}
+
+/** Rebuild a session from a full event list (oldest first), e.g. from the shared trail. */
+export function replay(events: readonly HistoryEntry[]): CadSession {
+  let s = emptySession();
+  for (const e of events) {
+    s = e.kind === "review" ? recordReview(s, e.feature, e.to, e.at, e.by) : recordLink(s, e.feature, e.requirement, e.kind === "link", e.at, e.by);
+  }
+  return s;
+}
+
 export function historyFor(s: CadSession, key: FeatureKey): HistoryEntry[] {
   return s.history.filter((e) => e.feature === key);
 }
@@ -124,4 +142,15 @@ export function pruneLinks(
     if (kept.length) next[k] = kept;
   }
   return { links: next, droppedFeatures: droppedFeatures.sort(), droppedLinks };
+}
+
+/**
+ * The part of a session that applies to the loaded model: reviews and links for
+ * features it has and requirements that exist. Nothing is deleted from the session
+ * or its history; a shared trail is never rewritten by a view.
+ */
+export function visibleSession(s: CadSession, features: ReadonlySet<FeatureKey>, reqIds?: ReadonlySet<string>): CadSession {
+  const links = pruneLinks(s.links, features, reqIds).links;
+  const reviews = Object.fromEntries(Object.entries(s.reviews).filter(([k]) => features.has(k)));
+  return { ...s, reviews, links };
 }
