@@ -68,7 +68,7 @@ type HeaderSource = { header(name: string): string | undefined };
  * is used so the flow can be exercised; in production a request without identity
  * is refused.
  */
-export function identify(req: HeaderSource, env: { NODE_ENV?: string; CAD_DEV_USER?: string } = process.env): Actor | null {
+export function identify(req: HeaderSource, env: Readonly<Record<string, string | undefined>> = process.env): Actor | null {
   const id = req.header("x-forwarded-user")?.trim();
   const email = req.header("x-forwarded-email")?.trim() || req.header("x-forwarded-preferred-username")?.trim();
   if (id) return { id, ...(email ? { email } : {}) };
