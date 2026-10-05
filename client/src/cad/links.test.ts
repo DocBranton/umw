@@ -51,3 +51,18 @@ test("keys split back into part and feature, even with # in a part name", () => 
   assert.deepEqual(splitKey(featureKey("Bracket #2", "Hole003")), { part: "Bracket #2", feature: "Hole003" });
   assert.equal(modelKey("a.stp", 3, 120), "a.stp|3|120");
 });
+
+test("visibleSession hides reviews and links for missing features without touching history", async () => {
+  const { visibleSession, recordReview: rr, recordLink: rl, emptySession: es, featureKey: fk } = await import("./links");
+  const a = fk("P", "Hole001");
+  const gone = fk("P", "Hole099");
+  let s = rr(es(), a, "Validated");
+  s = rr(s, gone, "Rejected");
+  s = rl(s, a, "REQ-002", true);
+  s = rl(s, a, "REQ-OLD", true);
+  s = rl(s, gone, "REQ-002", true);
+  const v = visibleSession(s, new Set([a]), new Set(["REQ-002"]));
+  assert.deepEqual(v.reviews, { [a]: "Validated" });
+  assert.deepEqual(v.links, { [a]: ["REQ-002"] });
+  assert.equal(v.history.length, s.history.length);
+});

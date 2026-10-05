@@ -25,7 +25,7 @@ import type { ModelData } from "./engine/types";
 import { CadTree } from "./CadTree";
 import { CadDetails } from "./CadDetails";
 import { MATERIALS } from "./labels";
-import { emptySession, featureKey, geometryHash, modelKey, recordLink, recordReview, type CadSession, type FeatureKey } from "./links";
+import { applyAction, emptySession, featureKey, geometryHash, modelKey, type CadAction, type CadSession, type FeatureKey } from "./links";
 import "./cad.css";
 
 export interface CadWorkspaceProps {
@@ -41,10 +41,13 @@ export interface CadWorkspaceProps {
   rev?: string;
   /** Requirements a feature can be linked to. Without them, linking is hidden. */
   requirements?: readonly LinkableRequirement[];
-  /** Reviews and requirement links for the loaded model. Controlled when given with onSessionChange. */
+  /** Reviews and requirement links for the loaded model. Controlled when given with onAction. */
   session?: CadSession;
-  /** Receives an updater, so rapid edits never overwrite each other. */
-  onSessionChange?: (update: (s: CadSession) => CadSession) => void;
+  /**
+   * Receives each engineer action (review or link change). Resolves true once the
+   * change is recorded; the owner reports failures.
+   */
+  onAction?: (action: CadAction) => Promise<boolean>;
   /** Where reviews are kept, shown in the model summary (e.g. "Saved in this browser only"). */
   storageNote?: string;
   /** Called once a model is analyzed, with its key and recognized features. */
@@ -78,7 +81,7 @@ export default function CadWorkspace({
   rev: partRev,
   requirements,
   session: sessionProp,
-  onSessionChange,
+  onAction,
   onModelLoaded,
   focus,
   storageNote,
@@ -105,9 +108,10 @@ export default function CadWorkspace({
   const [measure, setMeasure] = useState<{ count: number; result: MeasureResult | null; firstFace?: string } | null>(null);
   const [localSession, setLocalSession] = useState<CadSession>(emptySession);
   const session = sessionProp ?? localSession;
-  const updateSession = (fn: (s: CadSession) => CadSession) => {
-    if (onSessionChange) onSessionChange(fn);
-    else setLocalSession(fn);
+  const act = async (a: CadAction): Promise<boolean> => {
+    if (onAction) return onAction(a);
+    setLocalSession((cur) => applyAction(cur, a));
+    return true;
   };
   const [materialIdx, setMaterialIdx] = useState(0);
   const [displayUnit, setDisplayUnit] = useState<DisplayUnit>("in");
@@ -637,12 +641,11 @@ export default function CadWorkspace({
               featureOf={(s) => v.featureOf(s)}
               reviews={session.reviews}
               onReview={(key, st) => {
-                updateSession((cur) => recordReview(cur, key, st));
-                ping(`${key.split("#")[1]} marked ${st.toLowerCase()}`);
+                void act({ kind: "review", feature: key, to: st }).then((ok) => ok && ping(`${key.split("#")[1]} marked ${st.toLowerCase()}`));
               }}
               requirements={requirements}
               session={session}
-              onLink={(key, req, add) => updateSession((cur) => recordLink(cur, key, req, add))}
+              onLink={(key, req, add) => void act({ kind: add ? "link" : "unlink", feature: key, requirement: req })}
               storageNote={storageNote}
               materialIdx={materialIdx}
               onMaterial={setMaterialIdx}
