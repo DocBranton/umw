@@ -5,7 +5,7 @@ import type { Feature, ModelData, ReviewStatus } from "./engine/types";
 import type { Selection, ViewerPart } from "./engine/viewer";
 import type { Units } from "./engine/units";
 import { featureLabel, MATERIALS, reviewKey } from "./labels";
-import { addLink, removeLink, type LinkMap } from "./links";
+import { historyFor, type CadSession, type HistoryEntry, type LinkMap } from "./links";
 import type { LinkableRequirement } from "./CadWorkspace";
 
 type Row = [string, ReactNode] | null | false;
@@ -48,8 +48,9 @@ export function CadDetails({
   onMaterial,
   onSelect,
   requirements,
-  links,
-  onLinksChange,
+  session,
+  onLink,
+  storageNote,
 }: {
   model: ModelData;
   parts: ViewerPart[];
@@ -59,12 +60,14 @@ export function CadDetails({
   reviews: Readonly<Record<string, ReviewStatus>>;
   onReview: (key: string, status: ReviewStatus) => void;
   requirements?: readonly LinkableRequirement[];
-  links: LinkMap;
-  onLinksChange: (links: LinkMap) => void;
+  session: CadSession;
+  onLink: (featureKey: string, requirement: string, add: boolean) => void;
+  storageNote?: string;
   materialIdx: number;
   onMaterial: (i: number) => void;
   onSelect: (s: Selection) => void;
 }) {
+  const links = session.links;
   const mat = MATERIALS[materialIdx];
   const mass = (vol: number) => units.mass(units.massGrams(vol, mat.density));
   const ready = parts.every((p) => p.data);
@@ -111,6 +114,7 @@ export function CadDetails({
             ["Features", ready ? `${feats.length} recognized` : "Analyzing…"],
             feats.length > 0 && ["Review", ["Validated", "Inferred", "Rejected"].filter((s) => counts.get(s as ReviewStatus)).map((s) => `${counts.get(s as ReviewStatus)} ${s.toLowerCase()}`).join(", ")],
             !!requirements && feats.length > 0 && ["Traceability", linkSummary(links)],
+            !!storageNote && feats.length > 0 && ["Reviews", storageNote],
           ]}
         />
         <label className="cad-field">
@@ -259,7 +263,8 @@ export function CadDetails({
           ) : null}
         </div>
       </div>
-      {requirements ? <RequirementLinks featureKey={key} requirements={requirements} links={links} onLinksChange={onLinksChange} /> : null}
+      {requirements ? <RequirementLinks featureKey={key} requirements={requirements} links={links} onLink={onLink} /> : null}
+      <FeatureHistory entries={historyFor(session, key)} />
     </div>
   );
 }
@@ -278,12 +283,12 @@ function RequirementLinks({
   featureKey,
   requirements,
   links,
-  onLinksChange,
+  onLink,
 }: {
   featureKey: string;
   requirements: readonly LinkableRequirement[];
   links: LinkMap;
-  onLinksChange: (links: LinkMap) => void;
+  onLink: (featureKey: string, requirement: string, add: boolean) => void;
 }) {
   const linked = links[featureKey] ?? [];
   const byId = new Map(requirements.map((r) => [r.id, r]));
@@ -303,7 +308,7 @@ function RequirementLinks({
                   <b>{id}</b> {r ? `${r.name} · ${r.value}` : "(no longer in the baseline)"}
                 </span>
                 {r ? <span className={`state ${REQ_CLASS(r.status)}`}>{r.status}</span> : null}
-                <button type="button" className="cad-unlink" aria-label={`Unlink ${id}`} title={`Unlink ${id}`} onClick={() => onLinksChange(removeLink(links, featureKey, id))}>
+                <button type="button" className="cad-unlink" aria-label={`Unlink ${id}`} title={`Unlink ${id}`} onClick={() => onLink(featureKey, id, false)}>
                   <X size={13} />
                 </button>
               </li>
@@ -320,7 +325,7 @@ function RequirementLinks({
             value=""
             aria-label="Link to requirement"
             onChange={(e) => {
-              if (e.target.value) onLinksChange(addLink(links, featureKey, e.target.value));
+              if (e.target.value) onLink(featureKey, e.target.value, true);
             }}
           >
             <option value="">Choose a requirement…</option>
@@ -333,6 +338,37 @@ function RequirementLinks({
         </label>
       ) : null}
       <p className="muted cad-note">Linking records traceability only. It doesn't change this feature's review or the requirement's status.</p>
+    </div>
+  );
+}
+
+const when = (iso: string) =>
+  new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+
+function describe(e: HistoryEntry): string {
+  if (e.kind === "review") return e.to === "Inferred" ? "Returned to inferred" : e.to;
+  return `${e.kind === "link" ? "Linked" : "Unlinked"} ${e.requirement}`;
+}
+
+/** Most recent engineer actions on this feature, newest first. */
+function FeatureHistory({ entries }: { entries: HistoryEntry[] }) {
+  if (!entries.length) return null;
+  const recent = entries.slice(-6).reverse();
+  return (
+    <div className="cad-prov cad-history">
+      <h5>History</h5>
+      <ol>
+        {recent.map((e, i) => (
+          <li key={`${e.at}-${i}`}>
+            <span>{describe(e)}</span>
+            <time dateTime={e.at}>
+              {when(e.at)}
+              {e.by ? ` · ${e.by}` : ""}
+            </time>
+          </li>
+        ))}
+      </ol>
+      {entries.length > recent.length ? <p className="muted cad-note">{entries.length - recent.length} earlier entries kept.</p> : null}
     </div>
   );
 }

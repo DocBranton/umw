@@ -45,6 +45,7 @@ import {
 import { MissionPortfolioView, PortfolioView } from "@/components/portfolio";
 // The CAD link model is plain data (no three.js), so it is safe to import eagerly.
 import { emptySession, featuresFor, pruneLinks, splitKey, type CadSession, type FeatureKey } from "@/cad/links";
+import { BrowserSessionStore } from "@/cad/store";
 
 // three.js and the OpenCascade worker load only when the CAD workspace opens.
 const CadWorkspace = lazy(() => import("@/cad/CadWorkspace"));
@@ -1668,9 +1669,23 @@ function EngineeringView({
   const [cadModel, setCadModel] = useState<{ key: string; name: string } | null>(null);
   const [cadFocus, setCadFocus] = useState<{ key: FeatureKey; nonce: number } | null>(null);
   const cadSession = (cadModel && cadSessions[cadModel.key]) || null;
+  // Reviews and links persist per project and model. Browser storage for now; a
+  // server-backed store can replace it behind the same interface.
+  const cadStore = useMemo(() => new BrowserSessionStore(), []);
+  const saveWarned = useRef(false);
+  // onPing is recreated on every render; read it through a ref so saving runs only on real changes.
+  const pingRef = useRef(onPing);
+  pingRef.current = onPing;
+  useEffect(() => {
+    if (!cadModel || !cadSession) return;
+    if (!cadStore.save(selected.id, cadModel.key, cadSession) && !saveWarned.current) {
+      saveWarned.current = true;
+      pingRef.current("Reviews and links can't be saved in this browser. They'll be lost when you leave the page.");
+    }
+  }, [cadSession, cadModel, cadStore, selected.id]);
   function onCadModelLoaded(info: { key: string; name: string; features: FeatureKey[] }) {
     setCadModel({ key: info.key, name: info.name });
-    const prev = cadSessions[info.key];
+    const prev = cadSessions[info.key] ?? cadStore.load(selected.id, info.key);
     if (!prev) {
       setCadSessions((cur) => ({ ...cur, [info.key]: emptySession() }));
       return;
@@ -1679,7 +1694,7 @@ function EngineeringView({
     const present = new Set(info.features);
     const pruned = pruneLinks(prev.links, present, new Set(requirements.map((r) => r.id)));
     const reviews = Object.fromEntries(Object.entries(prev.reviews).filter(([k]) => present.has(k)));
-    setCadSessions((cur) => ({ ...cur, [info.key]: { reviews, links: pruned.links } }));
+    setCadSessions((cur) => ({ ...cur, [info.key]: { reviews, links: pruned.links, history: prev.history } }));
     if (pruned.droppedLinks) {
       onPing(`${pruned.droppedLinks} requirement link${pruned.droppedLinks === 1 ? "" : "s"} dropped: the feature or requirement is no longer present`);
     }
@@ -2114,9 +2129,12 @@ function EngineeringView({
                 partNumber={selected.part}
                 requirements={requirements}
                 session={cadSession ?? emptySession()}
-                onSessionChange={(next) => {
-                  if (cadModel) setCadSessions((cur) => ({ ...cur, [cadModel.key]: next }));
+                onSessionChange={(update) => {
+                  if (!cadModel) return;
+                  const key = cadModel.key;
+                  setCadSessions((cur) => ({ ...cur, [key]: update(cur[key] ?? emptySession()) }));
                 }}
+                storageNote={cadStore.label}
                 onModelLoaded={onCadModelLoaded}
                 focus={cadFocus}
               />
