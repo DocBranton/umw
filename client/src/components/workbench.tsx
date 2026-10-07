@@ -1664,6 +1664,8 @@ function EngineeringView({
   const [sheet, setSheet] = useState<"drawing" | "image">("drawing");
   const [uploads, setUploads] = useState<{ id: string; name: string; kind: string; url?: string; state: string }[]>([]);
   const [cadFile, setCadFile] = useState<File | null>(null);
+  // Uploaded viewable CAD files by evidence id, so a strip tile can open its own model.
+  const cadFiles = useRef(new Map<string, File>());
   // Feature reviews and requirement links, per CAD model.
   const [cadSessions, setCadSessions] = useState<Record<string, CadSession>>({});
   const cadSessionsRef = useRef(cadSessions);
@@ -1774,6 +1776,11 @@ function EngineeringView({
   function removeEvidence(item: { id?: string; name: string; url?: string }) {
     if (item.id) {
       if (item.url) URL.revokeObjectURL(item.url);
+      const file = cadFiles.current.get(item.id);
+      if (file) {
+        cadFiles.current.delete(item.id);
+        if (cadFile === file) setCadFile(null);
+      }
       setUploads((current) => current.filter((entry) => entry.id !== item.id));
       if (item.url && previewUrl === item.url) {
         setPreviewUrl(null);
@@ -1788,25 +1795,34 @@ function EngineeringView({
 
   function addFiles(list: FileList | null) {
     if (!list?.length) return;
-    const added = Array.from(list).map((file) => {
-      const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+    const files = Array.from(list);
+    const added = files.map((file) => {
+      const ext = fileExt(file.name);
+      const native = NATIVE_CAD_EXTS.includes(ext);
       const kind = ["png", "jpg", "jpeg", "tif", "tiff", "webp", "gif"].includes(ext)
         ? "Image"
-        : CAD_EXTS.includes(ext)
+        : CAD_EXTS.includes(ext) || native
           ? "CAD"
           : "Drawing";
+      const id = `${file.name}-${file.lastModified}-${Math.random().toString(36).slice(2, 7)}`;
+      if (kind === "CAD" && !native) cadFiles.current.set(id, file);
       return {
-        id: `${file.name}-${file.lastModified}-${Math.random().toString(36).slice(2, 7)}`,
+        id,
         name: file.name,
         kind,
         url: kind === "Image" ? URL.createObjectURL(file) : undefined,
-        state: "Ingested",
+        state: native ? "Needs STEP export" : "Ingested",
       };
     });
     setUploads((current) => [...added, ...current]);
-    // The first CAD file opens in the Verified CAD workspace.
-    const cad = Array.from(list).find((file) => CAD_EXTS.includes(file.name.split(".").pop()?.toLowerCase() ?? ""));
+    // The first viewable CAD file opens in the Verified CAD workspace.
+    const cad = files.find((file) => CAD_EXTS.includes(fileExt(file.name)));
     if (cad) setCadFile(cad);
+    const native = files.filter((file) => NATIVE_CAD_EXTS.includes(fileExt(file.name)));
+    if (native.length === files.length) {
+      onPing(`${native.map((f) => f.name).join(", ")} added as evidence. ${NATIVE_CAD_HELP}`);
+      return;
+    }
     const image = added.find((item) => item.url);
     if (image?.url) {
       setPreviewUrl(image.url);
@@ -1815,7 +1831,7 @@ function EngineeringView({
       setSheet("drawing");
     }
     onPing(
-      `${added.length} file${added.length === 1 ? "" : "s"} added to the evidence package${cad ? `. Open Verified Engineering CAD to inspect ${cad.name}` : ""}`,
+      `${added.length} file${added.length === 1 ? "" : "s"} added to the evidence package${cad ? `. Open Verified Engineering CAD to inspect ${cad.name}` : ""}${native.length ? `. ${NATIVE_CAD_HELP}` : ""}`,
     );
   }
 
@@ -1879,6 +1895,7 @@ function EngineeringView({
                     <p>or browse to upload drawings, images, or CAD</p>
                     <span className="upload-browse">Browse files</span>
                     <p className="upload-note">PDF, TIFF, JPG, PNG, DWG, DXF, STEP, IGES</p>
+                    <p className="upload-note">SolidWorks? Save as STEP AP242 to view the model.</p>
                   </div>
                   <div className="upload-kinds">
                     {[
@@ -1896,7 +1913,7 @@ function EngineeringView({
                     className="upload-input"
                     type="file"
                     multiple
-                    accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.webp,.dwg,.dxf,.step,.stp,.iges,.igs"
+                    accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.webp,.dwg,.dxf,.step,.stp,.iges,.igs,.brep,.brp,.stl,.obj,.glb,.gltf,.sldprt,.sldasm"
                     aria-label="Upload evidence"
                     onDragOver={(event) => event.preventDefault()}
                     onDrop={(event) => {
@@ -1964,10 +1981,19 @@ function EngineeringView({
                       <div key={item.id ?? item.name} className={on ? "strip-item on" : "strip-item"}>
                         <button
                           type="button"
+                          title={item.kind === "CAD" ? (NATIVE_CAD_EXTS.includes(fileExt(item.name)) ? NATIVE_CAD_HELP : `Open ${item.name} in Verified CAD`) : undefined}
                           onClick={() => {
                             if (item.kind === "Image") {
                               setPreviewUrl(item.url ?? null);
                               setSheet("image");
+                            } else if (item.kind === "CAD") {
+                              if (NATIVE_CAD_EXTS.includes(fileExt(item.name))) {
+                                onPing(NATIVE_CAD_HELP);
+                                return;
+                              }
+                              const file = item.id ? cadFiles.current.get(item.id) : undefined;
+                              if (file) setCadFile(file);
+                              onPhase("cad");
                             } else {
                               setSheet("drawing");
                             }
@@ -1976,7 +2002,15 @@ function EngineeringView({
                           {item.kind === "Image" ? (
                             <img src={item.url ?? selected.img} alt="" />
                           ) : (
-                            <span>{item.kind === "Drawing" ? "DWG" : item.kind === "CAD" ? "CAD" : "SPEC"}</span>
+                            <span>
+                              {item.kind === "Drawing"
+                                ? "DWG"
+                                : item.kind === "CAD"
+                                  ? NATIVE_CAD_EXTS.includes(fileExt(item.name))
+                                    ? fileExt(item.name).toUpperCase()
+                                    : "CAD"
+                                  : "SPEC"}
+                            </span>
                           )}
                           <em>{item.name}</em>
                         </button>
@@ -2282,7 +2316,13 @@ function EngineeringView({
   );
 }
 
-const CAD_EXTS = ["step", "stp", "iges", "igs", "brep", "brp", "stl", "obj", "glb", "gltf", "sldprt"];
+// Formats the in-browser CAD viewer can open (keep in sync with CAD_EXTENSIONS in cad/engine/loaders.ts,
+// which isn't imported here so three.js stays out of the main bundle).
+const CAD_EXTS = ["step", "stp", "iges", "igs", "brep", "brp", "stl", "obj", "glb", "gltf"];
+// Native SolidWorks files are kept as evidence but can't be viewed; they need a STEP export.
+const NATIVE_CAD_EXTS = ["sldprt", "sldasm"];
+const NATIVE_CAD_HELP = "SolidWorks files can't be viewed here. In SolidWorks, use File › Save As › STEP AP242 and upload the .step file.";
+const fileExt = (name: string) => name.split(".").pop()?.toLowerCase() ?? "";
 
 const drawingPins = [
   { x: 250, y: 78 },
